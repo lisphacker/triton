@@ -3860,9 +3860,7 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
         y_upcast = upcast(y, scale_y, type_y, comp_dtype, True)
 
-        debug = M == 128 and N == 128 and K == 64
-
-        if debug:
+        if M == 128 and N == 128 and K == 64:
           x_upcast_row = x_upcast[22, :]
           y_upcast_col = y_upcast[:, 41]
 
@@ -4005,8 +4003,9 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         large_tolerance = True
     atol = 2e-4 if large_tolerance else 1e-5
     rtol = 2e-2 if large_tolerance else 1e-2
-    print(f'z[22, 41]     = {z[22, 41]}')
-    print(f'z_ref[22, 41] = {z_ref[22, 41]}')
+    if M == 128 and N == 128 and K == 64:
+        print(f'z[22, 41]     = {z[22, 41]}')
+        print(f'z_ref[22, 41] = {z_ref[22, 41]}')
     torch.testing.assert_close(z, z_ref, atol=atol, rtol=rtol)
 
     # make sure ld/st are vectorized

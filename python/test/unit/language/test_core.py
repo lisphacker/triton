@@ -3821,6 +3821,11 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     def dot_scale_ref(x, scale_x, y, scale_y, type_x, type_y):
 
         def upcast(v, scale, type, comp_dtype, transposed):
+            print(f'dot_scale_ref()::upcast() - v.dtype = {v.dtype}')
+            print(f'dot_scale_ref()::upcast() - scale.dtype = {scale.dtype if scale is not None else "None"}')
+            print(f'dot_scale_ref()::upcast() - type = {type}')
+            print(f'dot_scale_ref()::upcast() - comp_dtype = {comp_dtype}')
+            print(f'dot_scale_ref()::upcast() - transposed = {transposed}')
             if scale is None:
                 type = {
                     "e4m3": torch.float8_e4m3fn,
@@ -3839,6 +3844,8 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
             BLOCK_SIZE = 512
             grid = ((N + BLOCK_SIZE - 1) // BLOCK_SIZE, )
             comp_dtype = tl.float16 if comp_dtype == torch.float16 else tl.bfloat16
+            print(f'dot_scale_ref()::upcast() - v_upcast.dtype = {v_upcast.dtype}')
+            print(f'dot_scale_ref()::upcast() - calling mxfp_upcast_kernel()')
             mxfp_upcast_kernel[grid](v, scale, v_upcast, scale.numel(), e_bits, m_bits, comp_dtype, BLOCK_SIZE,
                                      num_warps=num_warps)
             assert v_upcast.isfinite().all()
@@ -3848,9 +3855,57 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
 
         # Upcast to fp16 if one of the input is fp16
         comp_dtype = torch.float16 if "fp16" in (type_x, type_y) else torch.bfloat16
+        print(f'dot_scale_ref upcasting {type_x} and {type_y} to {comp_dtype}')
 
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
         y_upcast = upcast(y, scale_y, type_y, comp_dtype, True)
+
+        x_upcast_row = x_upcast[22, :]
+        y_upcast_col = y_upcast[:, 41]
+
+        def mydot(lhs, lhs_dtype, rhs, rhs_dtype, acc_dtype):
+            s = torch.zeros((), dtype=acc_dtype, device='cpu')
+            lhs = lhs.to(lhs_dtype)
+            rhs = rhs.to(rhs_dtype)
+            for l, r in zip(lhs.flatten(), rhs.flatten()):
+                l = l.to(acc_dtype)
+                r = r.to(acc_dtype)
+                s += l * r
+            return s
+
+        def manual_dot_blocked_like_torch(lhs, rhs, block=1):
+            # Match torch.dot input behavior: do arithmetic in fp32 after fp16 load
+            x = lhs.to(torch.float32).flatten()
+            y = rhs.to(torch.float32).flatten()
+
+            # Blocked partial sums (mimics vector-lane accumulation better than L2R)
+            partials = []
+            for i in range(0, x.numel(), block):
+                s = torch.zeros((), dtype=torch.float32, device=x.device)
+                for j in range(i, min(i + block, x.numel())):
+                    s = s + x[j] * y[j]
+                partials.append(s)
+
+            # Final reduction over partials
+            total = torch.zeros((), dtype=torch.float32, device=x.device)
+            for p in partials:
+                total = total + p
+            return total            
+        
+        print(f'x_upcast row', x_upcast_row)
+        print(f'y_upcast col', y_upcast_col)
+        print(f'dot =          {torch.dot(x_upcast_row, y_upcast_col)}')
+        print(f'dot_f32 =      {torch.dot(x_upcast_row.to(torch.float32), y_upcast_col.to(torch.float32))}')
+        print(f'dot_fp16 =     {torch.dot(x_upcast_row.to(torch.float16), y_upcast_col.to(torch.float16))}')
+        print(f'dot_bf16 =     {torch.dot(x_upcast_row.to(torch.bfloat16), y_upcast_col.to(torch.bfloat16))}')
+
+        dtypes = [torch.float16, torch.bfloat16, torch.float32]
+        for lhs_dtype in dtypes:
+            for rhs_dtype in dtypes:
+                for acc_dtype in dtypes:
+                    print(f'mydot {lhs_dtype!s:14} x {rhs_dtype!s:14} -> {acc_dtype!s:14} = {mydot(x_upcast_row, lhs_dtype, y_upcast_col, rhs_dtype, acc_dtype)}')
+
+        print(f'manual_dot_blocked_like_torch = {manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col)}')
 
         class AccumulateInFp32:
 
@@ -3930,7 +3985,9 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     z = x.new_empty((M, N), dtype=comp_dtype)
     pgm = dot_scale_kernel[(1, )](x, *x.stride(), scale_x, y, *y.stride(), scale_y, z, M, N, K, type_a, type_b,
                                   **kernel_kwargs)
+    # return
     z_ref = dot_scale_ref(x, scale_x, y, scale_y, type_a, type_b)
+    print(f'z.dtype={z.dtype}, z_ref.dtype={z_ref.dtype}')
     # Bigger tolerance for AMD CDNA2 devices.
     # CDNA2 devices use reduced precision fp16 and bf16 and flush input and output denormal values
     # to zero. Detailed info is at:
@@ -3945,6 +4002,8 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         large_tolerance = True
     atol = 2e-4 if large_tolerance else 1e-5
     rtol = 2e-2 if large_tolerance else 1e-2
+    print(f'z[22, 41]     = {z[22, 41]}')
+    print(f'z_ref[22, 41] = {z_ref[22, 41]}')
     torch.testing.assert_close(z, z_ref, atol=atol, rtol=rtol)
 
     # make sure ld/st are vectorized

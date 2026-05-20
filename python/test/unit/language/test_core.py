@@ -3860,52 +3860,55 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
         y_upcast = upcast(y, scale_y, type_y, comp_dtype, True)
 
-        x_upcast_row = x_upcast[22, :]
-        y_upcast_col = y_upcast[:, 41]
+        debug = M == 128 and N == 128 and K == 64
 
-        def mydot(lhs, lhs_dtype, rhs, rhs_dtype, acc_dtype):
-            s = torch.zeros((), dtype=acc_dtype, device='cpu')
-            lhs = lhs.to(lhs_dtype)
-            rhs = rhs.to(rhs_dtype)
-            for l, r in zip(lhs.flatten(), rhs.flatten()):
-                l = l.to(acc_dtype)
-                r = r.to(acc_dtype)
-                s += l * r
-            return s
+        if debug:
+          x_upcast_row = x_upcast[22, :]
+          y_upcast_col = y_upcast[:, 41]
 
-        def manual_dot_blocked_like_torch(lhs, rhs, block=1):
-            # Match torch.dot input behavior: do arithmetic in fp32 after fp16 load
-            x = lhs.to(torch.float32).flatten()
-            y = rhs.to(torch.float32).flatten()
+          def mydot(lhs, lhs_dtype, rhs, rhs_dtype, acc_dtype):
+              s = torch.zeros((), dtype=acc_dtype, device='cpu')
+              lhs = lhs.to(lhs_dtype)
+              rhs = rhs.to(rhs_dtype)
+              for l, r in zip(lhs.flatten(), rhs.flatten()):
+                  l = l.to(acc_dtype)
+                  r = r.to(acc_dtype)
+                  s += l * r
+              return s
 
-            # Blocked partial sums (mimics vector-lane accumulation better than L2R)
-            partials = []
-            for i in range(0, x.numel(), block):
-                s = torch.zeros((), dtype=torch.float32, device=x.device)
-                for j in range(i, min(i + block, x.numel())):
-                    s = s + x[j] * y[j]
-                partials.append(s)
+          def manual_dot_blocked_like_torch(lhs, rhs, block=1):
+              # Match torch.dot input behavior: do arithmetic in fp32 after fp16 load
+              x = lhs.to(torch.float32).flatten()
+              y = rhs.to(torch.float32).flatten()
 
-            # Final reduction over partials
-            total = torch.zeros((), dtype=torch.float32, device=x.device)
-            for p in partials:
-                total = total + p
-            return total            
-        
-        print(f'x_upcast row', x_upcast_row)
-        print(f'y_upcast col', y_upcast_col)
-        print(f'dot =          {torch.dot(x_upcast_row, y_upcast_col)}')
-        print(f'dot_f32 =      {torch.dot(x_upcast_row.to(torch.float32), y_upcast_col.to(torch.float32))}')
-        print(f'dot_fp16 =     {torch.dot(x_upcast_row.to(torch.float16), y_upcast_col.to(torch.float16))}')
-        print(f'dot_bf16 =     {torch.dot(x_upcast_row.to(torch.bfloat16), y_upcast_col.to(torch.bfloat16))}')
+              # Blocked partial sums (mimics vector-lane accumulation better than L2R)
+              partials = []
+              for i in range(0, x.numel(), block):
+                  s = torch.zeros((), dtype=torch.float32, device=x.device)
+                  for j in range(i, min(i + block, x.numel())):
+                      s = s + x[j] * y[j]
+                  partials.append(s)
 
-        dtypes = [torch.float16, torch.bfloat16, torch.float32]
-        for lhs_dtype in dtypes:
-            for rhs_dtype in dtypes:
-                for acc_dtype in dtypes:
-                    print(f'mydot {lhs_dtype!s:14} x {rhs_dtype!s:14} -> {acc_dtype!s:14} = {mydot(x_upcast_row, lhs_dtype, y_upcast_col, rhs_dtype, acc_dtype)}')
+              # Final reduction over partials
+              total = torch.zeros((), dtype=torch.float32, device=x.device)
+              for p in partials:
+                  total = total + p
+              return total            
+          
+          print(f'x_upcast row', x_upcast_row)
+          print(f'y_upcast col', y_upcast_col)
+          print(f'dot =          {torch.dot(x_upcast_row, y_upcast_col)}')
+          print(f'dot_f32 =      {torch.dot(x_upcast_row.to(torch.float32), y_upcast_col.to(torch.float32))}')
+          print(f'dot_fp16 =     {torch.dot(x_upcast_row.to(torch.float16), y_upcast_col.to(torch.float16))}')
+          print(f'dot_bf16 =     {torch.dot(x_upcast_row.to(torch.bfloat16), y_upcast_col.to(torch.bfloat16))}')
 
-        print(f'manual_dot_blocked_like_torch = {manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col)}')
+          dtypes = [torch.float16, torch.bfloat16, torch.float32]
+          for lhs_dtype in dtypes:
+              for rhs_dtype in dtypes:
+                  for acc_dtype in dtypes:
+                      print(f'mydot {lhs_dtype!s:14} x {rhs_dtype!s:14} -> {acc_dtype!s:14} = {mydot(x_upcast_row, lhs_dtype, y_upcast_col, rhs_dtype, acc_dtype)}')
+
+          print(f'manual_dot_blocked_like_torch = {manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col)}')
 
         class AccumulateInFp32:
 

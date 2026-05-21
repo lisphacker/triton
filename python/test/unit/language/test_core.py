@@ -3689,7 +3689,7 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
                           for normal_type in ["e4m3", "e5m2", "bf16", "fp16"]
                           for mma in (mma_nonk_sizes if is_hip() else [16])
                           for kpack in ([1, 2] if (is_hip() and not (is_hip_cdna4() or is_hip_gfx1250())) else [1])])
-def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, device):
+def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, device, request):
     if is_interpreter() and normal_type != "fp16":
         pytest.skip("bfloat16 is not supported in the interpreter")
 
@@ -3855,6 +3855,7 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
 
         # Upcast to fp16 if one of the input is fp16
         comp_dtype = torch.float16 if "fp16" in (type_x, type_y) else torch.bfloat16
+        print(f'test = {request.node.name}')
         print(f'dot_scale_ref upcasting {type_x} and {type_y} to {comp_dtype}')
 
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)

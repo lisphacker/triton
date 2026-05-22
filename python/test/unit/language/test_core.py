@@ -3699,6 +3699,11 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
+    print(f"torch.backends.mkldnn.matmul.fp32_precision = {torch.backends.mkldnn.matmul.fp32_precision}")
+    print(f"torch.backends.mkldnn.conv.fp32_precision = {torch.backends.mkldnn.conv.fp32_precision}")
+    print(f"torch.backends.mkldnn.rnn.fp32_precision = {torch.backends.mkldnn.rnn.fp32_precision}")
+
+
     TEST_M = 64
     TEST_N = 64
     TEST_K = 64

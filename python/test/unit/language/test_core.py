@@ -3699,6 +3699,12 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
+    TEST_M = 64
+    TEST_N = 64
+    TEST_K = 64
+    TEST_I = 57
+    TEST_J = 52
+
     is_SM120 = False
     if is_cuda():
         cc = torch.cuda.get_device_capability()
@@ -3866,9 +3872,9 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
         y_upcast = upcast(y, scale_y, type_y, comp_dtype, True)
 
-        if M == 128 and N == 128 and K == 64:
-          x_upcast_row = x_upcast[116, :]
-          y_upcast_col = y_upcast[:, 127]
+        if M == TEST_M and N == TEST_N and K == TEST_K:
+          x_upcast_row = x_upcast[TEST_I, :]
+          y_upcast_col = y_upcast[:, TEST_J]
 
           def mydot(lhs, lhs_dtype, rhs, rhs_dtype, acc_dtype):
               s = torch.zeros((), dtype=acc_dtype, device='cpu')
@@ -4011,9 +4017,9 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         large_tolerance = True
     atol = 2e-4 if large_tolerance else 1e-5
     rtol = 2e-2 if large_tolerance else 1e-2
-    if M == 128 and N == 128 and K == 64:
-        print(f'z[116, 127]     = {z[116, 127]}')
-        print(f'z_ref[116, 127] = {z_ref[116, 127]}')
+    if M == TEST_M and N == TEST_N and K == TEST_K:
+        print(f'z[{TEST_I}, {TEST_J}]     = {z[TEST_I, TEST_J]}')
+        print(f'z_ref[{TEST_I}, {TEST_J}] = {z_ref[TEST_I, TEST_J]}')
     torch.testing.assert_close(z, z_ref, atol=atol, rtol=rtol)
 
     # make sure ld/st are vectorized

@@ -3694,7 +3694,14 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
         pytest.skip("bfloat16 is not supported in the interpreter")
 
     print(f'test = {request.node.name}')
+    print(f'torch.__version__ = {torch.__version__}')
     print(torch.__config__.show())
+    print("mkldnn enabled", torch.backends.mkldnn.enabled)
+    print("mkldnn available", torch.backends.mkldnn.is_available())
+    print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
+
+    torch.backends.mkldnn.enabled = False
+
     print("mkldnn enabled", torch.backends.mkldnn.enabled)
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())

@@ -3693,6 +3693,12 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     if is_interpreter() and normal_type != "fp16":
         pytest.skip("bfloat16 is not supported in the interpreter")
 
+    print(f'test = {request.node.name}')
+    print(torch.__config__.show())
+    print("mkldnn enabled", torch.backends.mkldnn.enabled)
+    print("mkldnn available", torch.backends.mkldnn.is_available())
+    print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
+
     is_SM120 = False
     if is_cuda():
         cc = torch.cuda.get_device_capability()
@@ -3855,7 +3861,6 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
 
         # Upcast to fp16 if one of the input is fp16
         comp_dtype = torch.float16 if "fp16" in (type_x, type_y) else torch.bfloat16
-        print(f'test = {request.node.name}')
         print(f'dot_scale_ref upcasting {type_x} and {type_y} to {comp_dtype}')
 
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
@@ -3895,10 +3900,6 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
               return total            
           
 
-          print(torch.__config__.show())
-          print("mkldnn enabled", torch.backends.mkldnn.enabled)
-          print("mkldnn available", torch.backends.mkldnn.is_available())
-          print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
           print(f'x_upcast row', x_upcast_row)
           print(f'y_upcast col', y_upcast_col)

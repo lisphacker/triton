@@ -3697,6 +3697,9 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     print(f'test = {request.node.name}')
     print(f'torch.__version__ = {torch.__version__}')
     print(torch.__config__.show())
+    caps = torch.cpu.get_capabilities()
+    print(f'caps=\n{caps}')
+
     print("mkldnn enabled", torch.backends.mkldnn.enabled)
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())

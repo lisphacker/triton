@@ -3897,8 +3897,7 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
 
           print(torch.__config__.show())
           print("mkldnn enabled", torch.backends.mkldnn.enabled)
-          print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
-
+          print("mkldnn available", torch.backends.mkldnn.is_available())
           print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
           print(f'x_upcast row', x_upcast_row)

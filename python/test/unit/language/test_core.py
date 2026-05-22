@@ -3894,6 +3894,13 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
                   total = total + p
               return total            
           
+
+          print(torch.__config__.show())
+          print("mkldnn enabled", torch.backends.mkldnn.enabled)
+          print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
+
+          print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
+
           print(f'x_upcast row', x_upcast_row)
           print(f'y_upcast col', y_upcast_col)
           print(f'dot =          {torch.dot(x_upcast_row, y_upcast_col)}')

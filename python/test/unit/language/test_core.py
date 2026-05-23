@@ -3689,7 +3689,7 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
                           for normal_type in ["e4m3", "e5m2", "bf16", "fp16"]
                           for mma in (mma_nonk_sizes if is_hip() else [16])
                           for kpack in ([1, 2] if (is_hip() and not (is_hip_cdna4() or is_hip_gfx1250())) else [1])
-                          for mkldnn_enabled in [False]])
+                          for mkldnn_enabled in [True, False]])
 def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, device, request):
     if is_interpreter() and normal_type != "fp16":
         pytest.skip("bfloat16 is not supported in the interpreter")

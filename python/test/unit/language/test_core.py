@@ -3719,11 +3719,11 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
     print(f"torch.backends.mkldnn.rnn.fp32_precision = {torch.backends.mkldnn.rnn.fp32_precision}")
 
 
-    TEST_M = 64
+    TEST_M = 32
     TEST_N = 64
-    TEST_K = 64
-    TEST_I = 57
-    TEST_J = 52
+    TEST_K = 128
+    TEST_I = 18
+    TEST_J = 39
 
     is_SM120 = False
     if is_cuda():

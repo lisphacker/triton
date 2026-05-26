@@ -3680,6 +3680,8 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
 
 
 @pytest.mark.interpreter
+@pytest.mark.parametrize("manual_dot_blocks", [(1, 2, 4, 8, 16, 32)])
+@pytest.mark.parametrize("manual_dot_lanes", [(2, 4, 8, 16)])
 @pytest.mark.parametrize("M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision",
                          [(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, 4, mma, kpack, mkldnn_enabled, fp32_precision)
                           for M, N, K in itertools.product([32, 64, 128], [32, 64, 128], [64, 128])
@@ -3691,7 +3693,7 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
                           for kpack in ([1, 2] if (is_hip() and not (is_hip_cdna4() or is_hip_gfx1250())) else [1])
                           for mkldnn_enabled in [True, False]
                           for fp32_precision in ["ieee", "bf16"]])
-def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision, device, request):
+def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision, device, request):
     if is_interpreter() and normal_type != "fp16":
         pytest.skip("bfloat16 is not supported in the interpreter")
 
@@ -3923,8 +3925,46 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
               total = torch.zeros((), dtype=torch.float32, device=x.device)
               for p in partials:
                   total = total + p
-              return total            
-          
+              return total
+
+          def manual_dot_strided_lanes(lhs, rhs, lanes, reverse=False, round_partials=False):
+              x = lhs.to(torch.float32).flatten()
+              y = rhs.to(torch.float32).flatten()
+
+              partials = [torch.zeros((), dtype=torch.float32, device=x.device) for _ in range(lanes)]
+              indices = range(x.numel() - 1, -1, -1) if reverse else range(x.numel())
+              for lane, i in enumerate(indices):
+                  partial = partials[lane % lanes] + x[i] * y[i]
+                  if round_partials:
+                      partial = partial.to(torch.bfloat16).to(torch.float32)
+                  partials[lane % lanes] = partial
+
+              total = torch.zeros((), dtype=torch.float32, device=x.device)
+              for p in partials:
+                  total = total + p
+                  if round_partials:
+                      total = total.to(torch.bfloat16).to(torch.float32)
+              return total
+
+          def manual_dot_tree(lhs, rhs, reverse=False, round_partials=False):
+              x = lhs.to(torch.float32).flatten()
+              y = rhs.to(torch.float32).flatten()
+              products = x * y
+              if reverse:
+                  products = products.flip(0)
+              if round_partials:
+                  products = products.to(torch.bfloat16).to(torch.float32)
+
+              while products.numel() > 1:
+                  even_count = (products.numel() // 2) * 2
+                  pairs = products[:even_count].reshape(-1, 2).sum(dim=1)
+                  if round_partials:
+                      pairs = pairs.to(torch.bfloat16).to(torch.float32)
+                  if even_count != products.numel():
+                      products = torch.cat([pairs, products[-1:]])
+                  else:
+                      products = pairs
+              return products[0]
 
 
           print(f'x_upcast row', x_upcast_row)
@@ -3941,6 +3981,23 @@ def test_scaled_dot(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, nu
                       print(f'mydot {lhs_dtype!s:14} x {rhs_dtype!s:14} -> {acc_dtype!s:14} = {mydot(x_upcast_row, lhs_dtype, y_upcast_col, rhs_dtype, acc_dtype)}')
 
           print(f'manual_dot_blocked_like_torch = {manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col)}')
+          for block in manual_dot_blocks:
+              value = manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col, block)
+              print(f'manual_dot_blocked_like_torch block={block:2} = {value}')
+
+          for lanes in manual_dot_lanes:
+              for reverse in [False, True]:
+                  direction = "reverse" if reverse else "forward"
+                  value = manual_dot_strided_lanes(x_upcast_row, y_upcast_col, lanes, reverse)
+                  rounded_value = manual_dot_strided_lanes(x_upcast_row, y_upcast_col, lanes, reverse,
+                                                           round_partials=True)
+                  print(f'manual_dot_strided_lanes lanes={lanes:2} {direction:7} = {value}')
+                  print(f'manual_dot_strided_lanes lanes={lanes:2} {direction:7} round_partials = {rounded_value}')
+
+          print(f'manual_dot_tree forward = {manual_dot_tree(x_upcast_row, y_upcast_col)}')
+          print(f'manual_dot_tree reverse = {manual_dot_tree(x_upcast_row, y_upcast_col, reverse=True)}')
+          print(f'manual_dot_tree forward round_partials = {manual_dot_tree(x_upcast_row, y_upcast_col, round_partials=True)}')
+          print(f'manual_dot_tree reverse round_partials = {manual_dot_tree(x_upcast_row, y_upcast_col, reverse=True, round_partials=True)}')
 
         class AccumulateInFp32:
 

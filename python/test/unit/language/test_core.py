@@ -3852,7 +3852,11 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
         offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         tl.store(mxfp_ptr + offsets, tl.ravel(mxfp), mask=offsets < N * 32)
 
+    debug_x_upcast = None
+    debug_y_upcast = None
+
     def dot_scale_ref(x, scale_x, y, scale_y, type_x, type_y):
+        nonlocal debug_x_upcast, debug_y_upcast
 
         def upcast(v, scale, type, comp_dtype, transposed):
             print(f'dot_scale_ref()::upcast() - v.dtype = {v.dtype}')
@@ -3893,6 +3897,8 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
 
         x_upcast = upcast(x, scale_x, type_x, comp_dtype, False)
         y_upcast = upcast(y, scale_y, type_y, comp_dtype, True)
+        debug_x_upcast = x_upcast
+        debug_y_upcast = y_upcast
 
         if M == TEST_M and N == TEST_N and K == TEST_K:
           x_upcast_row = x_upcast[TEST_I, :]
@@ -4097,6 +4103,75 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
     if M == TEST_M and N == TEST_N and K == TEST_K:
         print(f'z[{TEST_I}, {TEST_J}]     = {z[TEST_I, TEST_J]}')
         print(f'z_ref[{TEST_I}, {TEST_J}] = {z_ref[TEST_I, TEST_J]}')
+
+    z_f32 = z.to(torch.float32)
+    z_ref_f32 = z_ref.to(torch.float32)
+    diff = (z_f32 - z_ref_f32).abs()
+    tol = atol + rtol * z_ref_f32.abs()
+    mismatch = diff > tol
+    if mismatch.any() and debug_x_upcast is not None and debug_y_upcast is not None:
+        max_flat_idx = int(torch.argmax(diff).item())
+        max_i = max_flat_idx // N
+        max_j = max_flat_idx % N
+        x_upcast_row = debug_x_upcast[max_i, :]
+        y_upcast_col = debug_y_upcast[:, max_j]
+
+        def manual_dot_blocked_like_torch(lhs, rhs, block=1):
+            x = lhs.to(torch.float32).flatten()
+            y = rhs.to(torch.float32).flatten()
+            partials = []
+            for i in range(0, x.numel(), block):
+                s = torch.zeros((), dtype=torch.float32, device=x.device)
+                for j in range(i, min(i + block, x.numel())):
+                    s = s + x[j] * y[j]
+                partials.append(s)
+            total = torch.zeros((), dtype=torch.float32, device=x.device)
+            for p in partials:
+                total = total + p
+            return total
+
+        def manual_dot_strided_lanes(lhs, rhs, lanes, reverse=False):
+            x = lhs.to(torch.float32).flatten()
+            y = rhs.to(torch.float32).flatten()
+            partials = [torch.zeros((), dtype=torch.float32, device=x.device) for _ in range(lanes)]
+            indices = range(x.numel() - 1, -1, -1) if reverse else range(x.numel())
+            for lane, i in enumerate(indices):
+                partials[lane % lanes] = partials[lane % lanes] + x[i] * y[i]
+            total = torch.zeros((), dtype=torch.float32, device=x.device)
+            for p in partials:
+                total = total + p
+            return total
+
+        def manual_dot_tree(lhs, rhs, reverse=False):
+            x = lhs.to(torch.float32).flatten()
+            y = rhs.to(torch.float32).flatten()
+            products = x * y
+            if reverse:
+                products = products.flip(0)
+            while products.numel() > 1:
+                even_count = (products.numel() // 2) * 2
+                pairs = products[:even_count].reshape(-1, 2).sum(dim=1)
+                products = torch.cat([pairs, products[-1:]]) if even_count != products.numel() else pairs
+            return products[0]
+
+        print(f'maxdiff index = ({max_i}, {max_j})')
+        print(f'maxdiff abs = {diff[max_i, max_j]}, tol = {tol[max_i, max_j]}')
+        print(f'maxdiff z     = {z[max_i, max_j]}')
+        print(f'maxdiff z_ref = {z_ref[max_i, max_j]}')
+        print(f'maxdiff dot =      {torch.dot(x_upcast_row, y_upcast_col)}')
+        print(f'maxdiff dot_f32 =  {torch.dot(x_upcast_row.to(torch.float32), y_upcast_col.to(torch.float32))}')
+        print(f'maxdiff dot_fp16 = {torch.dot(x_upcast_row.to(torch.float16), y_upcast_col.to(torch.float16))}')
+        print(f'maxdiff dot_bf16 = {torch.dot(x_upcast_row.to(torch.bfloat16), y_upcast_col.to(torch.bfloat16))}')
+        for block in manual_dot_blocks:
+            value = manual_dot_blocked_like_torch(x_upcast_row, y_upcast_col, block)
+            print(f'maxdiff manual_dot_blocked_like_torch block={block:2} = {value}')
+        for lanes in manual_dot_lanes:
+            for reverse in [False, True]:
+                direction = "reverse" if reverse else "forward"
+                value = manual_dot_strided_lanes(x_upcast_row, y_upcast_col, lanes, reverse)
+                print(f'maxdiff manual_dot_strided_lanes lanes={lanes:2} {direction:7} = {value}')
+        print(f'maxdiff manual_dot_tree forward = {manual_dot_tree(x_upcast_row, y_upcast_col)}')
+        print(f'maxdiff manual_dot_tree reverse = {manual_dot_tree(x_upcast_row, y_upcast_col, reverse=True)}')
     torch.testing.assert_close(z, z_ref, atol=atol, rtol=rtol)
 
     # make sure ld/st are vectorized

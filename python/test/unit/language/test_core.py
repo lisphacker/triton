@@ -5,6 +5,7 @@ import re
 from typing import Optional
 import math
 import textwrap
+import os
 
 import numpy as np
 import pytest
@@ -3706,6 +3707,10 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
     print("mkldnn enabled", torch.backends.mkldnn.enabled)
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
+
+    print('env')
+    for var in ['ATEN_CPU_CAPABILITY', 'OMP_NUM_THREADS', 'ONEDNN_VERBOSE']:
+        print(f'  {var}={os.getenv(var, None)}')
 
     torch.backends.mkldnn.enabled = mkldnn_enabled
     torch.backends.mkldnn.matmul.fp32_precision = fp32_precision

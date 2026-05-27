@@ -3684,8 +3684,11 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
 @pytest.mark.interpreter
 @pytest.mark.parametrize("manual_dot_blocks", [(1, 2, 4, 8, 16, 32)])
 @pytest.mark.parametrize("dot_reduction_config", [
-    pytest.param(("8", "0"), id="dot-lanes8-forward"),
-    pytest.param(("8", "1"), id="dot-lanes8-reverse-k"),
+    pytest.param(("lane", "4", "32", "0"), id="dot-lanes4-forward"),
+    pytest.param(("lane", "8", "32", "0"), id="dot-lanes8-forward"),
+    pytest.param(("lane", "16", "32", "0"), id="dot-lanes16-forward"),
+    pytest.param(("block", "8", "16", "0"), id="dot-block16-forward"),
+    pytest.param(("block", "8", "32", "0"), id="dot-block32-forward"),
 ])
 @pytest.mark.parametrize("manual_dot_lanes", [(2, 4, 8, 16)])
 @pytest.mark.parametrize("M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision",
@@ -3713,12 +3716,20 @@ def test_scaled_dot(dot_reduction_config, manual_dot_blocks, manual_dot_lanes, M
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
-    dot_reduction_lanes, dot_reduction_reverse_k = dot_reduction_config
+    dot_reduction_mode, dot_reduction_lanes, dot_reduction_block_size, dot_reduction_reverse_k = dot_reduction_config
     dot_reduction_env = {
+        "TRITON_CPU_DOT_REDUCTION_MODE": dot_reduction_mode,
         "TRITON_CPU_DOT_REDUCTION_LANES": dot_reduction_lanes,
+        "TRITON_CPU_DOT_REDUCTION_BLOCK_SIZE": dot_reduction_block_size,
         "TRITON_CPU_DOT_REDUCTION_REVERSE_K": dot_reduction_reverse_k,
     }
-    dot_reduction_config_key = int(dot_reduction_lanes) * 2 + int(dot_reduction_reverse_k)
+    dot_reduction_config_key = {
+        ("lane", "4", "32", "0"): 1,
+        ("lane", "8", "32", "0"): 2,
+        ("lane", "16", "32", "0"): 3,
+        ("block", "8", "16", "0"): 4,
+        ("block", "8", "32", "0"): 5,
+    }[dot_reduction_config]
 
     torch.backends.mkldnn.enabled = mkldnn_enabled
     torch.backends.mkldnn.matmul.fp32_precision = fp32_precision
@@ -4097,7 +4108,8 @@ def test_scaled_dot(dot_reduction_config, manual_dot_blocks, manual_dot_lanes, M
     print('env')
     with mock.patch.dict(os.environ, dot_reduction_env):
         for var in ['ATEN_CPU_CAPABILITY', 'OMP_NUM_THREADS', 'ONEDNN_VERBOSE',
-                    'TRITON_CPU_DOT_REDUCTION_LANES', 'TRITON_CPU_DOT_REDUCTION_REVERSE_K']:
+                    'TRITON_CPU_DOT_REDUCTION_MODE', 'TRITON_CPU_DOT_REDUCTION_LANES',
+                    'TRITON_CPU_DOT_REDUCTION_BLOCK_SIZE', 'TRITON_CPU_DOT_REDUCTION_REVERSE_K']:
             print(f'  {var}={os.getenv(var, None)}')
         pgm = dot_scale_kernel[(1, )](x, *x.stride(), scale_x, y, *y.stride(), scale_y, z, M, N, K, type_a,
                                       type_b, DOT_REDUCTION_CONFIG=dot_reduction_config_key,

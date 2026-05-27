@@ -4110,7 +4110,8 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
     tol = atol + rtol * z_ref_f32.abs()
     mismatch = diff > tol
     if mismatch.any() and debug_x_upcast is not None and debug_y_upcast is not None:
-        max_flat_idx = int(torch.argmax(diff).item())
+        violation = torch.where(mismatch, diff - tol, torch.full_like(diff, float("-inf")))
+        max_flat_idx = int(torch.argmax(violation).item())
         max_i = max_flat_idx // N
         max_j = max_flat_idx % N
         x_upcast_row = debug_x_upcast[max_i, :]

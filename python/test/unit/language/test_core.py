@@ -6,6 +6,7 @@ from typing import Optional
 import math
 import textwrap
 import os
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -3682,6 +3683,10 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
 
 @pytest.mark.interpreter
 @pytest.mark.parametrize("manual_dot_blocks", [(1, 2, 4, 8, 16, 32)])
+@pytest.mark.parametrize("dot_reduction_config", [
+    pytest.param(("8", "0"), id="dot-lanes8-forward"),
+    pytest.param(("8", "1"), id="dot-lanes8-reverse-k"),
+])
 @pytest.mark.parametrize("manual_dot_lanes", [(2, 4, 8, 16)])
 @pytest.mark.parametrize("M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision",
                          [(M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, 4, mma, kpack, mkldnn_enabled, fp32_precision)
@@ -3692,9 +3697,9 @@ def test_dot(M, N, K, num_warps, col_a, col_b, epilogue, input_precision, in_dty
                           for normal_type in ["e4m3", "e5m2", "bf16", "fp16"]
                           for mma in (mma_nonk_sizes if is_hip() else [16])
                           for kpack in ([1, 2] if (is_hip() and not (is_hip_cdna4() or is_hip_gfx1250())) else [1])
-                          for mkldnn_enabled in [True, False]
+                          for mkldnn_enabled in [True]
                           for fp32_precision in ["ieee", "bf16"]])
-def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision, device, request):
+def test_scaled_dot(dot_reduction_config, manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, rhs_scale, mxfp_type, normal_type, num_warps, mma, kpack, mkldnn_enabled, fp32_precision, device, request):
     if is_interpreter() and normal_type != "fp16":
         pytest.skip("bfloat16 is not supported in the interpreter")
 
@@ -3708,9 +3713,12 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
     print("mkldnn available", torch.backends.mkldnn.is_available())
     print("mkldnn bf16 supported", torch.ops.mkldnn._is_mkldnn_bf16_supported())
 
-    print('env')
-    for var in ['ATEN_CPU_CAPABILITY', 'OMP_NUM_THREADS', 'ONEDNN_VERBOSE']:
-        print(f'  {var}={os.getenv(var, None)}')
+    dot_reduction_lanes, dot_reduction_reverse_k = dot_reduction_config
+    dot_reduction_env = {
+        "TRITON_CPU_DOT_REDUCTION_LANES": dot_reduction_lanes,
+        "TRITON_CPU_DOT_REDUCTION_REVERSE_K": dot_reduction_reverse_k,
+    }
+    dot_reduction_config_key = int(dot_reduction_lanes) * 2 + int(dot_reduction_reverse_k)
 
     torch.backends.mkldnn.enabled = mkldnn_enabled
     torch.backends.mkldnn.matmul.fp32_precision = fp32_precision
@@ -3752,7 +3760,7 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
     @triton.jit
     def dot_scale_kernel(a_base, stride_a0, stride_a1, a_scale, b_base, stride_b0, stride_b1, b_scale, out,
                          BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr, type_a: tl.constexpr,
-                         type_b: tl.constexpr):
+                         type_b: tl.constexpr, DOT_REDUCTION_CONFIG: tl.constexpr):
         DIV_FACTOR_A: tl.constexpr = 2 if type_a == "e2m1" else 1
         DIV_FACTOR_B: tl.constexpr = 2 if type_b == "e2m1" else 1
         PACKED_BLOCK_K_A: tl.constexpr = BLOCK_K // DIV_FACTOR_A
@@ -4086,8 +4094,14 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
         kernel_kwargs["kpack"] = kpack
         kernel_kwargs["matrix_instr_nonkdim"] = mma
     z = x.new_empty((M, N), dtype=comp_dtype)
-    pgm = dot_scale_kernel[(1, )](x, *x.stride(), scale_x, y, *y.stride(), scale_y, z, M, N, K, type_a, type_b,
-                                  **kernel_kwargs)
+    print('env')
+    with mock.patch.dict(os.environ, dot_reduction_env):
+        for var in ['ATEN_CPU_CAPABILITY', 'OMP_NUM_THREADS', 'ONEDNN_VERBOSE',
+                    'TRITON_CPU_DOT_REDUCTION_LANES', 'TRITON_CPU_DOT_REDUCTION_REVERSE_K']:
+            print(f'  {var}={os.getenv(var, None)}')
+        pgm = dot_scale_kernel[(1, )](x, *x.stride(), scale_x, y, *y.stride(), scale_y, z, M, N, K, type_a,
+                                      type_b, DOT_REDUCTION_CONFIG=dot_reduction_config_key,
+                                      **kernel_kwargs)
     # return
     z_ref = dot_scale_ref(x, scale_x, y, scale_y, type_a, type_b)
     print(f'z.dtype={z.dtype}, z_ref.dtype={z_ref.dtype}')

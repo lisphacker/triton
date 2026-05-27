@@ -4159,6 +4159,50 @@ def test_scaled_dot(manual_dot_blocks, manual_dot_lanes, M, N, K, col_a, col_b, 
         print(f'maxdiff abs = {diff[max_i, max_j]}, tol = {tol[max_i, max_j]}')
         print(f'maxdiff z     = {z[max_i, max_j]}')
         print(f'maxdiff z_ref = {z_ref[max_i, max_j]}')
+
+        active_mkldnn_enabled = torch.backends.mkldnn.enabled
+
+        def dot_scale_ref_with_mkldnn(enabled):
+            previous_enabled = torch.backends.mkldnn.enabled
+            try:
+                torch.backends.mkldnn.enabled = enabled
+                return dot_scale_ref(x, scale_x, y, scale_y, type_a, type_b)
+            finally:
+                torch.backends.mkldnn.enabled = previous_enabled
+
+        z_ref_mkldnn_enabled = dot_scale_ref_with_mkldnn(True)
+        z_ref_mkldnn_disabled = dot_scale_ref_with_mkldnn(False)
+        print(f'maxdiff active mkldnn enabled = {active_mkldnn_enabled}')
+        for ref_name, ref_value in [("mkldnn_enabled", z_ref_mkldnn_enabled),
+                                    ("mkldnn_disabled", z_ref_mkldnn_disabled)]:
+            ref_value_f32 = ref_value.to(torch.float32)
+            ref_diff = (z_f32 - ref_value_f32).abs()
+            ref_tol = atol + rtol * ref_value_f32.abs()
+            ref_mismatch = ref_diff > ref_tol
+            ref_violation = torch.where(ref_mismatch, ref_diff - ref_tol,
+                                        torch.full_like(ref_diff, float("-inf")))
+            ref_flat_idx = int(torch.argmax(ref_violation).item()) if ref_mismatch.any() else 0
+            ref_i = ref_flat_idx // N
+            ref_j = ref_flat_idx % N
+            print(f'maxdiff z_ref_{ref_name}[{max_i}, {max_j}] = {ref_value[max_i, max_j]}')
+            print(f'maxdiff z_ref_{ref_name} abs = {ref_diff[max_i, max_j]}, tol = {ref_tol[max_i, max_j]}')
+            print(f'maxdiff z_ref_{ref_name} mismatches = {int(ref_mismatch.sum().item())}')
+            if ref_mismatch.any():
+                print(f'maxdiff z_ref_{ref_name} worst index = ({ref_i}, {ref_j})')
+                print(f'maxdiff z_ref_{ref_name} worst z = {z[ref_i, ref_j]}')
+                print(f'maxdiff z_ref_{ref_name} worst ref = {ref_value[ref_i, ref_j]}')
+                print(f'maxdiff z_ref_{ref_name} worst abs = {ref_diff[ref_i, ref_j]}, tol = {ref_tol[ref_i, ref_j]}')
+        ref_path_diff = (z_ref_mkldnn_enabled.to(torch.float32) -
+                         z_ref_mkldnn_disabled.to(torch.float32)).abs()
+        ref_path_flat_idx = int(torch.argmax(ref_path_diff).item())
+        ref_path_i = ref_path_flat_idx // N
+        ref_path_j = ref_path_flat_idx % N
+        print(f'maxdiff z_ref mkldnn path diff at active index = {ref_path_diff[max_i, max_j]}')
+        print(f'maxdiff z_ref mkldnn path max diff index = ({ref_path_i}, {ref_path_j})')
+        print(f'maxdiff z_ref mkldnn enabled at path max = {z_ref_mkldnn_enabled[ref_path_i, ref_path_j]}')
+        print(f'maxdiff z_ref mkldnn disabled at path max = {z_ref_mkldnn_disabled[ref_path_i, ref_path_j]}')
+        print(f'maxdiff z_ref mkldnn path max diff = {ref_path_diff[ref_path_i, ref_path_j]}')
+
         print(f'maxdiff dot =      {torch.dot(x_upcast_row, y_upcast_col)}')
         print(f'maxdiff dot_f32 =  {torch.dot(x_upcast_row.to(torch.float32), y_upcast_col.to(torch.float32))}')
         print(f'maxdiff dot_fp16 = {torch.dot(x_upcast_row.to(torch.float16), y_upcast_col.to(torch.float16))}')
